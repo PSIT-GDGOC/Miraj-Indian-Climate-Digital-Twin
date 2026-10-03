@@ -1,4 +1,4 @@
-## Miraj- India Climate Digital Twin: 2D Spatiotemporal Geospatial Reanalysis and Prognostic Forecasting Platform
+## Miraj- India's Climate Digital Twin: 2D Spatiotemporal Geospatial Reanalysis and Prognostic Forecasting Platform
 
 This repository houses the 2D Geospatial Reanalysis and Prognostic Forecasting Platform. The platform assimilates space-based remote sensing datasets from geostationary satellites (MOSDAC INSAT-3D/3DR) and ground-based observations (India Meteorological Department - IMD Pune) to model atmospheric and land-surface processes at high spatial and temporal resolutions.
 
@@ -50,7 +50,6 @@ graph TD
 
 ## Data Engineering and Processing Pipeline
 
-![Satellite Telemetry Ingestion and Regrid Alignment](assets/satellite_telemetry.png)
 
 The ingestion layer translates raw, heterogeneous data formats into structured, multi-dimensional grids:
 
