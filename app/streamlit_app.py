@@ -13,6 +13,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from src.spatial_predictions import mask_region_boundary_local, get_all_states
 from src.climate_alerts import assess_climate_alert
 from src.visualizations import build_state_heatmap
+from src.climate_indices import calculate_spi, classify_spi, assess_drought_condition
 
 st.set_page_config(
     layout="wide",
@@ -400,3 +401,102 @@ with chart_col2:
         st.plotly_chart(fig_hist, theme="streamlit", width="stretch")
     else:
         st.info("Insufficient data for distribution plot.")
+
+st.divider()
+
+# Drought Conditions & Standardized Precipitation Index (SPI)
+st.subheader("Drought Conditions")
+st.caption(
+    "Meteorological and hydrological drought monitoring using the World Meteorological Organization (WMO) "
+    "Standardized Precipitation Index (SPI) across 30-day (agricultural) and 90-day (hydrological) timescales."
+)
+
+total_observations = len(available_dates)
+min_required_obs = 30
+
+if total_observations < min_required_obs:
+    st.info(
+        f"**Historical observations required for drought index.** SPI calculations require at least "
+        f"{min_required_obs} consecutive daily observations to fit Gamma distribution parameters without "
+        f"statistical bias. The active session is currently running on the bundled {total_observations}-day "
+        f"demonstration dataset ({available_dates[0]} to {available_dates[-1]}).  \n\n"
+        f"**Next Steps:** Decode extended historical archives using `scripts/decoder.py` to activate "
+        f"30-day and 90-day SPI spatial heatmaps and anomaly tracking."
+    )
+else:
+    if "rainfall" not in ds.variables:
+        st.warning("Precipitation variable 'rainfall' not found in dataset; SPI cannot be computed.")
+    else:
+        drought_col1, drought_col2 = st.columns([1, 3])
+        with drought_col1:
+            spi_window = st.radio(
+                "Accumulation window",
+                [30, 90],
+                format_func=lambda w: f"{w}-day window ({'agricultural' if w == 30 else 'hydrological'})",
+                key="spi_window_selection",
+            )
+
+        with st.spinner(f"Computing {spi_window}-day gridded SPI..."):
+            spi_grid = calculate_spi(ds["rainfall"], window=spi_window, min_samples=min_required_obs)
+            day_spi = spi_grid.sel(time=date)
+            masked_spi, spi_bounds, _, spi_outline = mask_region_boundary_local(day_spi, state)
+            spi_min_lon, spi_max_lon, spi_min_lat, spi_max_lat = spi_bounds
+            spi_bbox = masked_spi.where(
+                (masked_spi.lon >= spi_min_lon) & (masked_spi.lon <= spi_max_lon), drop=True
+            ).where(
+                (masked_spi.lat >= spi_min_lat) & (masked_spi.lat <= spi_max_lat), drop=True
+            )
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)
+            spi_valid = ~np.isnan(spi_bbox.values)
+            spi_mean = float(np.nanmean(spi_bbox.values)) if spi_valid.any() else np.nan
+            spi_min = float(np.nanmin(spi_bbox.values)) if spi_valid.any() else np.nan
+
+        assessment = assess_drought_condition(spi_mean, window=spi_window)
+
+        scol1, scol2, scol3 = st.columns(3)
+        with scol1.container(border=True):
+            st.metric("State Mean SPI", f"{spi_mean:.2f}" if not np.isnan(spi_mean) else "N/A")
+        with scol2.container(border=True):
+            st.metric("Peak Drought Intensity (Min SPI)", f"{spi_min:.2f}" if not np.isnan(spi_min) else "N/A")
+        with scol3.container(border=True):
+            st.metric("Drought Category", assessment.category)
+
+        if assessment.severity in {"extreme_drought", "severe_drought"}:
+            st.error(f"**{assessment.category}:** {assessment.message}  \n**Recommended Action:** {assessment.recommendation}")
+        elif assessment.severity == "moderate_drought":
+            st.warning(f"**{assessment.category}:** {assessment.message}  \n**Recommended Action:** {assessment.recommendation}")
+        elif assessment.severity == "unavailable":
+            st.info(f"**{assessment.category}:** {assessment.message}")
+        else:
+            st.success(f"**{assessment.category}:** {assessment.message}")
+
+        if spi_valid.any():
+            spi_map = build_state_heatmap(
+                spi_bbox,
+                spi_outline,
+                state,
+                f"{spi_window}-Day SPI",
+                "index",
+                "RdBu",
+            )
+            st.plotly_chart(spi_map, theme="streamlit", width="stretch")
+
+            df_spi_masked = masked_spi.to_dataframe().reset_index()
+            df_spi_valid = df_spi_masked.dropna(subset=[f"spi_{spi_window}"]).copy()
+            df_spi_display = df_spi_valid[["lat", "lon", f"spi_{spi_window}"]].rename(columns={
+                "lat": "Latitude", "lon": "Longitude", f"spi_{spi_window}": f"SPI_{spi_window}",
+            })
+            st.download_button(
+                label=f"Download {state} {spi_window}-day SPI as CSV",
+                data=df_spi_display.to_csv(index=False).encode("utf-8"),
+                file_name=f"{state}_{date}_spi_{spi_window}.csv",
+                mime="text/csv",
+                width="stretch",
+            )
+        else:
+            st.info(
+                f"No valid {spi_window}-day SPI values could be calculated for {state} on {date}. "
+                f"Ensure the dataset includes at least {spi_window} consecutive daily observations prior to this date."
+            )
